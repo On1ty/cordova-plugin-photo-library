@@ -37,6 +37,9 @@ final class PhotoLibraryService {
     let contentMode = PHImageContentMode.aspectFill // AspectFit: can be smaller, AspectFill - can be larger. TODO: resize to exact size
 
     var cacheActive = false
+    
+    var photo : UIImage? = nil
+    var images : [NSDictionary] = [NSDictionary]()
 
     let mimeTypes = [
         "flv":  "video/x-flv",
@@ -98,10 +101,85 @@ final class PhotoLibraryService {
         return SingletonWrapper.singleton
 
     }
+    
 
-    static func hasPermission() -> Bool {
-        return PHPhotoLibrary.authorizationStatus() == .authorized
+    func getPhotosFromAlbum(_ albumTitle: String) -> [NSDictionary] {
+        
+        print("getPhotosFromAlbum 1");
+        print(albumTitle);
+        
+        self.images = [NSDictionary]()
+        
+        var assetCollection = PHAssetCollection()
+        var albumFound = Bool()
+        var photoAssets = PHFetchResult<AnyObject>()
+        let fetchOptions = PHFetchOptions()
+        
+        fetchOptions.predicate = NSPredicate(format: "title = %@", albumTitle)
+        let collection:PHFetchResult = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: fetchOptions)
+        
+        print("getPhotosFromAlbum 2");
+        
+        if let firstObject = collection.firstObject{
+            //found the album
+            assetCollection = firstObject
+            albumFound = true
+        }
+        else { albumFound = false }
+        _ = collection.count
+        photoAssets = PHAsset.fetchAssets(in: assetCollection, options: nil) as! PHFetchResult<AnyObject>
 
+        
+        
+        photoAssets.enumerateObjects{(object: AnyObject!,
+            count: Int,
+            stop: UnsafeMutablePointer<ObjCBool>) in
+            
+            if object is PHAsset{
+                let asset = object as! PHAsset
+                print("Asset")
+                print(asset)
+                
+                let semaphore = DispatchSemaphore(value: 0)
+                
+                let libraryItem = self.assetToLibraryItem(asset: asset, useOriginalFileNames: false, includeAlbumData: false);
+                
+                self.getCompleteInfo(libraryItem, completion: { (fullPath) in
+                    libraryItem["filePath"] = fullPath
+                    semaphore.signal()
+                })
+                
+                semaphore.wait()
+                
+                self.images.append(libraryItem)
+                
+//                let imageSize = CGSize(width: asset.pixelWidth,
+//                                       height: asset.pixelHeight)
+//
+//                /* For faster performance, and maybe degraded image */
+//                let options = PHImageRequestOptions()
+//                options.deliveryMode = .fastFormat
+//                options.isSynchronous = true
+//
+//                imageManager.requestImage(for: asset,
+//                                          targetSize: imageSize,
+//                                          contentMode: .aspectFill,
+//                                          options: options,
+//                                          resultHandler: {
+//                                            (image, info) -> Void in
+//                                            self.photo = image!
+//                                            /* The image is now available to us */
+//                                            self.addImgToArray(uploadImage: self.photo!)
+//                                            print("enum for image, This is number 2")
+//
+//                })
+                
+            }
+        }
+        
+        print("getPhotosFromAlbum 3");
+        
+        return self.images;
     }
 
     func getLibrary(_ options: PhotoLibraryGetLibraryOptions, completion: @escaping (_ result: [NSDictionary], _ chunkNum: Int, _ isLastChunk: Bool) -> Void) {
@@ -214,7 +292,7 @@ final class PhotoLibraryService {
 
             if(mediaType == "image") {
                 PHImageManager.default().requestImageData(for: asset, options: self.imageRequestOptions) {
-                    (imageData: Data?, dataUTI: String?, orientation: UIImageOrientation, info: [AnyHashable: Any]?) in
+                    (imageData: Data?, dataUTI: String?, orientation: UIImage.Orientation, info: [AnyHashable: Any]?) in
 
                     if(imageData == nil) {
                         completion(nil)
@@ -356,7 +434,7 @@ final class PhotoLibraryService {
             let asset = obj as! PHAsset
 
             PHImageManager.default().requestImageData(for: asset, options: self.imageRequestOptions) {
-                (imageData: Data?, dataUTI: String?, orientation: UIImageOrientation, info: [AnyHashable: Any]?) in
+                (imageData: Data?, dataUTI: String?, orientation: UIImage.Orientation, info: [AnyHashable: Any]?) in
 
                 guard let image = imageData != nil ? UIImage(data: imageData!) : nil else {
                     completion(nil)
@@ -388,7 +466,7 @@ final class PhotoLibraryService {
 
             if(mediaType == "image") {
                 PHImageManager.default().requestImageData(for: asset, options: self.imageRequestOptions) {
-                    (imageData: Data?, dataUTI: String?, orientation: UIImageOrientation, info: [AnyHashable: Any]?) in
+                    (imageData: Data?, dataUTI: String?, orientation: UIImage.Orientation, info: [AnyHashable: Any]?) in
 
                     if(imageData == nil) {
                         completion(nil)
@@ -666,7 +744,7 @@ final class PhotoLibraryService {
     fileprivate func getDataFromURL(_ url: String) throws -> Data {
         if url.hasPrefix("data:") {
 
-            guard let match = self.dataURLPattern.firstMatch(in: url, options: NSRegularExpression.MatchingOptions(rawValue: 0), range: NSMakeRange(0, url.characters.count)) else { // TODO: firstMatchInString seems to be slow for unknown reason
+            guard let match = self.dataURLPattern.firstMatch(in: url, options: NSRegularExpression.MatchingOptions(rawValue: 0), range: NSMakeRange(0, url.count)) else { // TODO: firstMatchInString seems to be slow for unknown reason
                 throw PhotoLibraryError.error(description: "The dataURL could not be parsed")
             }
             let dataPos = match.range(at: 0).length
